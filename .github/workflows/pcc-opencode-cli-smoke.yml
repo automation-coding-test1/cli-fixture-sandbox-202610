@@ -1,0 +1,43 @@
+# Stage 2 registration candidate: Owner must approve the one-fiommit separately. NO DISPATCH in Stage 2.
+# One-time public-fixture CLI smoke test ONLY. No AI model, repeckout or private inputs.
+name: PCC OpenCode 2.0.29 public CLI smoke (one shot)
+'on':
+  workflow_dispatch:
+    inputs:
+      owner_stage3_approval:
+        description: 'Stage 3 separate Owner approval required; leave DO_NOT_RUN until then'
+        type: choice
+        required: true
+        default: DO_NOT_RUN
+        options:
+          - DO_NOT_RUN
+          - I_APPROVE_ONE_CLI_SMOKE
+permissions: {}
+concurrency:
+  group: pcc-opencode-cli-smoke-one-shot
+  cancel-in-progress: false
+jobs:
+  cli_smoke:
+    # No automatic push/PR triggers. The very first dispatch is the only eligible run;
+    # a skipped early dispatch consumes run_number=1. Re-runs always skip.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.repository == 'automation-coding-test1/cli-fixture-sandbox-202610' &&
+          github.actor == 'automation-coding-test1' &&
+          github.ref == 'refs/heads/main' &&
+          github.event.repository.visibility == 'public' &&
+          github.run_number == 1 && github.run_attempt == 1 &&
+          inputs.owner_stage3_approval == 'I_APPROVE_ONE_CLI_SMOKE' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_DIR: ${{ runner.temp }}/pcc-opencode-source
+      EVIDENCE_DIR: ${{ runner.temp }}/pcc-opencode-evidence
+      NPM_META_URL: https://registry.npmjs.org/@opencode%2fcli-linux-x64/2.0.29
+      NPM_TARBALL_URL: https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz
+      NPM_SHA512_SRI: sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==
+      NPM_SHA1: 313baad6a682b48fcda9e227164a685c4ab0887c
+                                             2,1           Top
