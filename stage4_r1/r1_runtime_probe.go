@@ -120,7 +120,7 @@ func main(){
   func(){defer func(){if e:=recover();e!=nil{reason=fmt.Sprint(e)}}();checksRun()}()
   result:=map[string]any{"status":"R1_REAL_RUNTIME_PASS","checks":checks}
   if reason!="" {result["status"]="R1_ENVIRONMENT_BLOCKED";result["reason"]=reason;fmt.Println("R1_HOLD:",reason)}
-  output,_:=json.MarshalIndent(result,"","  ")
+  output,_:=json.Marshal(result)
   fmt.Println("R1_JSON_RESULT="+string(output))
   if reason!=""{os.Exit(87)}
   fmt.Println("R1_REAL_PERMISSION_API_AND_OS_GATE_PASS")

@@ -78,7 +78,7 @@ jobs:
           cd "$R1_ROOT/source/stage4_r1"
           # Audit the EXACT candidate inventory before executing any checked-out Python or Go code.
           # This 64-hex SHA pin is generated from the independently reviewed local packet.
-          export R1_SOURCE_MANIFEST_SHA256=8999378c0c5df25211cef71f9de16756df21a954af620f3a292c24e64cfa5ec4
+          export R1_SOURCE_MANIFEST_SHA256=2dbc91188a68b5e1d8ef768fbcec4877b279017eb68c3a9aca1014f35cc0fe9f
           python3 - <<'PY_FILES'
           import hashlib, os, pathlib, re
           source=pathlib.Path(os.environ['R1_ROOT'])/'source'/'stage4_r1'
