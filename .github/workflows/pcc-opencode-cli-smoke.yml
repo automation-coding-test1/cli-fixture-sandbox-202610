@@ -18,15 +18,15 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cli_smoke:
-    # No automatic push/PR triggers. The very first dispatch is the only eligible run;
-    # a skipped early dispatch consumes run_number=1. Re-runs always skip.
+    # No automatic push/PR triggers. Only first workflow_dispatch (enforced at preflight) is eligible.
+    # Preflight reads GitHub's public run history; API unavailable/ambiguous -> HARD STOP.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
           github.repository == 'automation-coding-test1/cli-fixture-sandbox-202610' &&
           github.actor == 'automation-coding-test1' &&
           github.ref == 'refs/heads/main' &&
           github.event.repository.visibility == 'public' &&
-          github.run_number == 1 && github.run_attempt == 1 &&
+          github.run_attempt == 1 &&
           inputs.owner_stage3_approval == 'I_APPROVE_ONE_CLI_SMOKE' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -34,26 +34,60 @@ jobs:
       run:
         shell: bash
     env:
-      SOURCE_DIR: ${{ runner.temp }}/pcc-opencode-source
-      EVIDENCE_DIR: ${{ runner.temp }}/pcc-opencode-evidence
       NPM_META_URL: https://registry.npmjs.org/@opencode%2fcli-linux-x64/2.0.29
       NPM_TARBALL_URL: https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz
       NPM_SHA512_SRI: sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==
       NPM_SHA1: 313baad6a682b48fcda9e227164a685c4ab0887c
       DOCKER_IMAGE: docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
     steps:
-      - name: Fail-closed preflight (public repo, first run and approved input)
+      - name: Fail-closed preflight (public repo, first dispatch ID, approved input)
         run: |
           set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP unavailable}"
+          : "${GITHUB_ENV:?GITHUB_ENV unavailable}"
+          SOURCE_DIR="${RUNNER_TEMP}/pcc-opencode-source"
+          EVIDENCE_DIR="${RUNNER_TEMP}/pcc-opencode-evidence"
+          export SOURCE_DIR EVIDENCE_DIR
+          mkdir -p "$SOURCE_DIR" "$EVIDENCE_DIR"
+          printf 'SOURCE_DIR=%s\nEVIDENCE_DIR=%s\n' "$SOURCE_DIR" "$EVIDENCE_DIR" >> "$GITHUB_ENV"
           test "$GITHUB_REPOSITORY" = 'automation-coding-test1/cli-fixture-sandbox-202610'
           test "$GITHUB_ACTOR" = 'automation-coding-test1'
           test "$GITHUB_REF" = 'refs/heads/main'
-          test "$GITHUB_RUN_NUMBER" = '1'
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$RUNNER_OS" = 'Linux'
+          test "${{ inputs.owner_stage3_approval }}" = 'I_APPROVE_ONE_CLI_SMOKE'
           command -v docker >/dev/null
           command -v python3 >/dev/null
-          mkdir -p "$SOURCE_DIR" "$EVIDENCE_DIR"
+          # Concurrency serializes dispatches. Query public GitHub run history,
+          # using an unauthenticated API request (no GITHUB_TOKEN export or secret).
+          python3 - <<'PY_ONE_SHOT'
+          import json, os, urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']
+          current=int(os.environ['GITHUB_RUN_ID'])
+          workflow='pcc-opencode-cli-smoke.yml'
+          url=f'https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=100'
+          request=urllib.request.Request(url,headers={
+              'Accept':'application/vnd.github+json',
+              'User-Agent':'pcc-opencode-one-shot-preflight/1.0',
+              'Cache-Control':'no-cache',
+          })
+          with urllib.request.urlopen(request,timeout=20) as response:
+              if response.status!=200: raise RuntimeError('Run history HTTP non-200: HARD STOP')
+              raw=response.read(1024*1024+1)
+          if len(raw)>1024*1024: raise RuntimeError('Run history exceeds bound: HARD STOP')
+          data=json.loads(raw)
+          runs=data.get('workflow_runs')
+          count=data.get('total_count')
+          if not isinstance(runs,list) or not isinstance(count,int) or count<1 or count>100:
+              raise RuntimeError('History count invalid or exceeds audit scope: HARD STOP')
+          if len(runs)!=count: raise RuntimeError('History page inconsistent: HARD STOP')
+          ids=[r.get('id') for r in runs if r.get('event')=='workflow_dispatch'
+               and r.get('path')=='.github/workflows/'+workflow]
+          if len(ids)!=count or not all(type(n) is int for n in ids) or current not in ids:
+              raise RuntimeError('Dispatch run history incomplete: HARD STOP')
+          if current!=min(ids): raise RuntimeError('NOT_FIRST_DISPATCH: HARD STOP')
+          print('FIRST_DISPATCH_READ_ONLY_GATE_PASS')
+          PY_ONE_SHOT
           printf 'PREFLIGHT_PASS\n' > "$EVIDENCE_DIR/preflight.txt"
 
       - name: Public npm metadata and tarball SHA-512/SHA-1 verification
