@@ -1,0 +1,234 @@
+# Stage 2 registration candidate: Owner must approve the one-file Commit separately. NO DISPATCH in Stage 2.
+# One-time public-fixture CLI smoke test ONLY. No AI model, repo checkout or private inputs.
+name: PCC OpenCode 2.0.29 public CLI smoke (one shot)
+'on':
+  workflow_dispatch:
+    inputs:
+      owner_stage3_approval:
+        description: 'Stage 3 separate Owner approval required; leave DO_NOT_RUN until then'
+        type: choice
+        required: true
+        default: DO_NOT_RUN
+        options:
+          - DO_NOT_RUN
+          - I_APPROVE_ONE_CLI_SMOKE
+permissions: {}
+concurrency:
+  group: pcc-opencode-cli-smoke-one-shot
+  cancel-in-progress: false
+jobs:
+  cli_smoke:
+    # No automatic push/PR triggers. Only first workflow_dispatch (enforced at preflight) is eligible.
+    # Preflight reads GitHub's public run history; API unavailable/ambiguous -> HARD STOP.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.repository == 'automation-coding-test1/cli-fixture-sandbox-202610' &&
+          github.actor == 'automation-coding-test1' &&
+          github.ref == 'refs/heads/main' &&
+          github.event.repository.visibility == 'public' &&
+          github.run_attempt == 1 &&
+          inputs.owner_stage3_approval == 'I_APPROVE_ONE_CLI_SMOKE' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      NPM_META_URL: https://registry.npmjs.org/@opencode%2fcli-linux-x64/2.0.29
+      NPM_TARBALL_URL: https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz
+      NPM_SHA512_SRI: sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==
+      NPM_SHA1: 313baad6a682b48fcda9e227164a685c4ab0887c
+      DOCKER_IMAGE: docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
+    steps:
+      - name: Fail-closed preflight (public repo, first dispatch ID, approved input)
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP unavailable}"
+          : "${GITHUB_ENV:?GITHUB_ENV unavailable}"
+          SOURCE_DIR="${RUNNER_TEMP}/pcc-opencode-source"
+          EVIDENCE_DIR="${RUNNER_TEMP}/pcc-opencode-evidence"
+          export SOURCE_DIR EVIDENCE_DIR
+          mkdir -p "$SOURCE_DIR" "$EVIDENCE_DIR"
+          printf 'SOURCE_DIR=%s\nEVIDENCE_DIR=%s\n' "$SOURCE_DIR" "$EVIDENCE_DIR" >> "$GITHUB_ENV"
+          test "$GITHUB_REPOSITORY" = 'automation-coding-test1/cli-fixture-sandbox-202610'
+          test "$GITHUB_ACTOR" = 'automation-coding-test1'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$RUNNER_OS" = 'Linux'
+          test "${{ inputs.owner_stage3_approval }}" = 'I_APPROVE_ONE_CLI_SMOKE'
+          command -v docker >/dev/null
+          command -v python3 >/dev/null
+          # Concurrency serializes dispatches. Query public GitHub run history,
+          # using an unauthenticated API request (no GITHUB_TOKEN export or secret).
+          python3 - <<'PY_ONE_SHOT'
+          import json, os, urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']
+          current=int(os.environ['GITHUB_RUN_ID'])
+          workflow='pcc-opencode-cli-smoke.yml'
+          url=f'https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=100'
+          request=urllib.request.Request(url,headers={
+              'Accept':'application/vnd.github+json',
+              'User-Agent':'pcc-opencode-one-shot-preflight/1.0',
+              'Cache-Control':'no-cache',
+          })
+          with urllib.request.urlopen(request,timeout=20) as response:
+              if response.status!=200: raise RuntimeError('Run history HTTP non-200: HARD STOP')
+              raw=response.read(1024*1024+1)
+          if len(raw)>1024*1024: raise RuntimeError('Run history exceeds bound: HARD STOP')
+          data=json.loads(raw)
+          runs=data.get('workflow_runs')
+          count=data.get('total_count')
+          if not isinstance(runs,list) or not isinstance(count,int) or count<1 or count>100:
+              raise RuntimeError('History count invalid or exceeds audit scope: HARD STOP')
+          if len(runs)!=count: raise RuntimeError('History page inconsistent: HARD STOP')
+          ids=[r.get('id') for r in runs if r.get('event')=='workflow_dispatch'
+               and r.get('path')=='.github/workflows/'+workflow]
+          if len(ids)!=count or not all(type(n) is int for n in ids) or current not in ids:
+              raise RuntimeError('Dispatch run history incomplete: HARD STOP')
+          if current!=min(ids): raise RuntimeError('NOT_FIRST_DISPATCH: HARD STOP')
+          print('FIRST_DISPATCH_READ_ONLY_GATE_PASS')
+          PY_ONE_SHOT
+          printf 'PREFLIGHT_PASS\n' > "$EVIDENCE_DIR/preflight.txt"
+
+      - name: Public npm metadata and tarball SHA-512/SHA-1 verification
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          from urllib.error import HTTPError
+          source = pathlib.Path(os.environ['SOURCE_DIR'])
+          evidence = pathlib.Path(os.environ['EVIDENCE_DIR'])
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise RuntimeError('Redirect denied')
+          opener = urllib.request.build_opener(NoRedirect)
+          def fetch(url):
+              if not url.startswith('https://registry.npmjs.org/'):
+                  raise RuntimeError('Unapproved outbound host')
+              return opener.open(urllib.request.Request(url, headers={'User-Agent':'pcc-opencode-public-sri-one-shot/1.0'}),timeout=40)
+          with fetch(os.environ['NPM_META_URL']) as response:
+              if response.status != 200:
+                  raise RuntimeError('Metadata HTTP non-200')
+              data=response.read(1_048_577)
+          if len(data)>1_048_576: raise RuntimeError('Metadata limit')
+          meta=json.loads(data)
+          if (meta.get('name'),meta.get('version')) != ('@opencode/cli-linux-x64','2.0.29'):
+              raise RuntimeError('Name/version mismatch')
+          dist=meta.get('dist',{})
+          if (dist.get('integrity'),dist.get('shasum'),dist.get('tarball')) != (os.environ['NPM_SHA512_SRI'],os.environ['NPM_SHA1'],os.environ['NPM_TARBALL_URL']):
+              raise RuntimeError('Registry metadata mismatch')
+          (evidence/'npm_public_metadata.raw.json').write_bytes(data)
+          archive=source/'cli-linux-x64-2.0.29.tgz'
+          sha512=hashlib.sha512();sha1=hashlib.sha1();sha256=hashlib.sha256();size=0
+          with fetch(os.environ['NPM_TARBALL_URL']) as response, archive.open('xb') as target:
+              if response.status != 200: raise RuntimeError('Tarball HTTP non-200')
+              while True:
+                  chunk=response.read(1024*1024)
+                  if not chunk: break
+                  size+=len(chunk)
+                  if size>180*1024*1024: raise RuntimeError('Tarball size limit')
+                  sha512.update(chunk);sha1.update(chunk);sha256.update(chunk)
+                  target.write(chunk)
+          sri='sha512-'+base64.b64encode(sha512.digest()).decode('ascii')
+          if sri!=os.environ['NPM_SHA512_SRI'] or sha1.hexdigest()!=os.environ['NPM_SHA1']:
+              archive.unlink(missing_ok=True)
+              raise RuntimeError('Tarball Integrity mismatch: HARD STOP')
+          (evidence/'tarball_integrity.txt').write_text('SHA512_SRI_PASS\nSHA1_PASS\nsize='+str(size)+'\nsha256='+sha256.hexdigest()+'\n')
+          PY
+
+      - name: Safely inspect npm archive and extract only two allowlisted files
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tarfile
+          base=pathlib.Path(os.environ['SOURCE_DIR'])
+          evidence=pathlib.Path(os.environ['EVIDENCE_DIR'])
+          required={'package/bin/opencode','package/package.json'}
+          tarball=base/'cli-linux-x64-2.0.29.tgz'
+          selected={}
+          with tarfile.open(tarball,mode='r:gz') as archive:
+              members=archive.getmembers()
+              if len(members)>100: raise RuntimeError('Unexpected tar member count')
+              for member in members:
+                  p=pathlib.PurePosixPath(member.name)
+                  if p.is_absolute() or '..' in p.parts or not member.name.startswith('package/'):
+                      raise RuntimeError('Unsafe tar member path')
+                  if not (member.isdir() or member.isfile()):
+                      raise RuntimeError('Unsafe tar member type')
+                  if member.isfile() and member.name in required:
+                      if member.name in selected: raise RuntimeError('Duplicate required file')
+                      if member.size>(240*1024*1024 if member.name.endswith('/opencode') else 65536):
+                          raise RuntimeError('Required file exceeds size limit')
+                      selected[member.name]=member
+              if set(selected)!=required: raise RuntimeError('Required files missing')
+              for name in sorted(required):
+                  member=selected[name]
+                  dest=base/('opencode' if name.endswith('/opencode') else 'package.json')
+                  stream=archive.extractfile(member)
+                  if stream is None: raise RuntimeError('Failed reading required file')
+                  with stream, dest.open('xb') as target:
+                      while True:
+                          chunk=stream.read(1024*1024)
+                          if not chunk: break
+                          target.write(chunk)
+                  dest.chmod(0o755 if name.endswith('/opencode') else 0o644)
+          pkg=json.loads((base/'package.json').read_text())
+          if (pkg.get('name'),pkg.get('version'))!=('@opencode/cli-linux-x64','2.0.29'):
+              raise RuntimeError('Package manifest mismatch')
+          for name in ('opencode','package.json'):
+              f=base/name
+              (evidence/(name+'.sha256')).write_text(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+name+'\n')
+          (evidence/'allowlist_check.txt').write_text('ALLOWLIST_EXTRACTION_PASS\n')
+          PY
+
+      - name: Digest-pinned Ubuntu network-disabled CLI --version/--help smoke
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$DOCKER_IMAGE" >/dev/null
+          set +e
+          timeout --signal=TERM --kill-after=5s 120s docker run --rm \
+            --platform linux/amd64 --pull=never --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit=64 --memory=1536m --cpus=1 --user=65534:65534 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            -e HOME=/tmp -e XDG_CONFIG_HOME=/tmp/config -e XDG_DATA_HOME=/tmp/data \
+            --mount "type=bind,src=$SOURCE_DIR,dst=/opt/input,readonly" \
+            "$DOCKER_IMAGE" /bin/bash -c '
+              set -euo pipefail
+              test ! -e /var/run/docker.sock
+              /opt/input/opencode --version
+              /opt/input/opencode --help
+            ' > "$EVIDENCE_DIR/cli.stdout.txt" 2> "$EVIDENCE_DIR/cli.stderr.txt"
+          result=$?
+          set -e
+          printf '%s\n' "$result" > "$EVIDENCE_DIR/cli.exitcode"
+          if test "$result" -ne 0; then echo 'CLI_SMOKE_FAIL_OR_BLOCKED'; exit 86; fi
+          echo 'CLI_ONLY_PASS_NO_MODEL' > "$EVIDENCE_DIR/status.txt"
+
+      - name: Produce bounded public-safe receipt and hashes
+        id: evidence_ready
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          printf 'repository=%s\nrun_id=%s\nrun_number=%s\nrun_attempt=%s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_ATTEMPT" > "$EVIDENCE_DIR/EXECUTION_RECEIPT.txt"
+          printf 'status=%s\nAI_MODEL_NOT_INVOKED=1\nPCC_PRIVATE_REPO_NOT_CHECKED_OUT=1\n' \
+            "$(cat "$EVIDENCE_DIR/status.txt" 2>/dev/null || echo UNKNOWN_OR_BLOCKED)" >> "$EVIDENCE_DIR/EXECUTION_RECEIPT.txt"
+          for name in cli.stdout.txt cli.stderr.txt; do
+            if test -f "$EVIDENCE_DIR/$name" && test "$(wc -c < "$EVIDENCE_DIR/$name")" -gt 131072; then
+              echo "Evidence limit exceeded ($name)"; exit 87
+            fi
+          done
+          ( cd "$EVIDENCE_DIR" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 -r sha256sum ) > "$EVIDENCE_DIR/SHA256SUMS.txt"
+          ( cd "$EVIDENCE_DIR" && sha256sum -c SHA256SUMS.txt )
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload public-safe minimal evidence, retention 1 day
+        if: ${{ always() && steps.evidence_ready.outputs.verified == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pcc-opencode-cli-smoke-public-evidence
+          path: ${{ runner.temp }}/pcc-opencode-evidence/
+          if-no-files-found: warn
+          retention-days: 1
