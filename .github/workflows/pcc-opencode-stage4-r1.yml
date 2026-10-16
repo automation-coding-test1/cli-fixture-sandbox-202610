@@ -1,0 +1,196 @@
+# STAGE 4 R1 CANDIDATE ONLY. NO GITHUB REGISTRATION/DISPATCH APPROVED.
+# Public synthetic-only, model-free runtime permission testing.
+name: PCC OpenCode Stage4 R1 isolated runtime negative tests (one shot)
+'on':
+  workflow_dispatch:
+    inputs:
+      owner_stage4_r1_approval:
+        type: choice
+        description: Separate Owner approval required
+        required: true
+        default: DO_NOT_RUN
+        options: [DO_NOT_RUN, I_APPROVE_STAGE4_R1_ONCE]
+      owner_approved_sha:
+        type: string
+        description: Exact 40-hex SHA of separately approved public main commit
+        required: true
+        default: HOLD_NOT_APPROVED
+permissions: {}
+concurrency:
+  group: pcc-opencode-stage4-r1-exactly-one-dispatch
+  cancel-in-progress: false
+jobs:
+  r1_runtime:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.repository == 'automation-coding-test1/cli-fixture-sandbox-202610' &&
+          github.actor == 'automation-coding-test1' &&
+          github.ref == 'refs/heads/main' &&
+          github.event.repository.visibility == 'public' &&
+          github.run_attempt == 1 &&
+          inputs.owner_stage4_r1_approval == 'I_APPROVE_STAGE4_R1_ONCE' &&
+          inputs.owner_approved_sha == github.sha }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOCKER_IMAGE: docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
+      R1_APPROVED_SHA: ${{ inputs.owner_approved_sha }}
+    steps:
+      - name: Public first dispatch and pinned SHA Gate
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = automation-coding-test1/cli-fixture-sandbox-202610
+          test "$GITHUB_ACTOR" = automation-coding-test1
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          case "$R1_APPROVED_SHA" in *[!0-9a-f]*|'') echo 'INVALID_SHA'; exit 81;; esac
+          test "${#R1_APPROVED_SHA}" -eq 40
+          test "$GITHUB_SHA" = "$R1_APPROVED_SHA"
+          python3 - <<'PY_FIRST'
+          import json,os,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY'];run=int(os.environ['GITHUB_RUN_ID']);fname='pcc-opencode-stage4-r1.yml'
+          url=f'https://api.github.com/repos/{repo}/actions/workflows/{fname}/runs?event=workflow_dispatch&per_page=100'
+          with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'pcc-opencode-r1/1.0','Cache-Control':'no-cache'}),timeout=20) as r:
+           if r.status!=200:raise RuntimeError('GITHUB_HISTORY_BLOCKED')
+           data=r.read(1024*1024+1)
+          if len(data)>1024*1024:raise RuntimeError('HISTORY_TOO_LARGE')
+          j=json.loads(data);n=j.get('total_count');items=j.get('workflow_runs')
+          if not isinstance(n,int) or not 1<=n<=100 or not isinstance(items,list) or len(items)!=n:raise RuntimeError('HISTORY_INCOMPLETE')
+          ids=[x.get('id') for x in items if x.get('event')=='workflow_dispatch' and x.get('path')=='.github/workflows/'+fname]
+          if len(ids)!=n or not all(type(x)==int for x in ids) or run not in ids or run!=min(ids):raise RuntimeError('NOT_FIRST_APPROVED_DISPATCH')
+          print('R1_FIRST_DISPATCH_PASS')
+          PY_FIRST
+          : "${RUNNER_TEMP:?}"
+          printf 'R1_ROOT=%s\nR1_EVIDENCE_DIR=%s\nR1_BIN_DIR=%s\n' \
+            "$RUNNER_TEMP/pcc-r1" "$RUNNER_TEMP/pcc-r1-evidence" "$RUNNER_TEMP/pcc-r1-bin" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/pcc-r1" "$RUNNER_TEMP/pcc-r1-evidence" "$RUNNER_TEMP/pcc-r1-bin"
+
+      - name: Read only checkout of exact public approved commit and static gate
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+          git -c credential.helper= clone --quiet --no-tags --depth 1 \
+            https://github.com/automation-coding-test1/cli-fixture-sandbox-202610.git "$R1_ROOT/source"
+          test "$(git -C "$R1_ROOT/source" rev-parse HEAD)" = "$GITHUB_SHA"
+          cd "$R1_ROOT/source/stage4_r1"
+          # Audit the EXACT candidate inventory before executing any checked-out Python or Go code.
+          # This 64-hex SHA pin is generated from the independently reviewed local packet.
+          export R1_SOURCE_MANIFEST_SHA256=8999378c0c5df25211cef71f9de16756df21a954af620f3a292c24e64cfa5ec4
+          python3 - <<'PY_FILES'
+          import hashlib, os, pathlib, re
+          source=pathlib.Path(os.environ['R1_ROOT'])/'source'/'stage4_r1'
+          manifest=source/'R1_SOURCES_SHA256SUMS.txt'
+          expected_hash=os.environ['R1_SOURCE_MANIFEST_SHA256']
+          if hashlib.sha256(manifest.read_bytes()).hexdigest()!=expected_hash:raise RuntimeError('AUDITED_MANIFEST_SHA_MISMATCH')
+          lines=manifest.read_text().splitlines()
+          targets={}
+          for line in lines:
+           match=re.fullmatch(r'([0-9a-f]{64})  (.+)',line)
+           if not match:raise RuntimeError('MANIFEST_LINE_INVALID')
+           digest,rel=match.groups()
+           p=pathlib.PurePosixPath(rel)
+           if p.is_absolute() or '..' in p.parts or rel.startswith('.') or rel in targets:raise RuntimeError('MANIFEST_PATH_UNSAFE')
+           targets[rel]=digest
+          actual={p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file() or p.is_symlink()}
+          expected=set(targets)|{'R1_SOURCES_SHA256SUMS.txt'}
+          if actual!=expected:raise RuntimeError('UNAPPROVED_FILE_OR_MISSING_FILE')
+          if len(targets)!=10 or any(p.is_symlink() for p in source.rglob('*')):raise RuntimeError('SYMLINK_OR_COUNT_MISMATCH')
+          for rel,digest in targets.items():
+           if hashlib.sha256((source/rel).read_bytes()).hexdigest()!=digest:raise RuntimeError('AUDITED_FILE_SHA_MISMATCH_'+rel)
+          print('R1_AUDITED_FILE_SET_AND_SHA_PASS')
+          PY_FILES
+          PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest -v test_local_gate > "$R1_EVIDENCE_DIR/local_static_gate.raw.log" 2>&1
+
+      - name: Verify exact Stage3 CLI from npm before isolation
+        run: |
+          set -euo pipefail
+          export R1_BIN_DIR R1_EVIDENCE_DIR
+          python3 "$R1_ROOT/source/stage4_r1/fetch_pinned_cli.py" > "$R1_EVIDENCE_DIR/npm_integrity.raw.log" 2>&1
+
+      - name: Pinned Linux isolation, actual runtime permission API and OS negative tests
+        id: r1
+        run: |
+          set -euo pipefail
+          cd "$R1_ROOT/source/stage4_r1"
+          command -v go >/dev/null || { echo GO_TOOLCHAIN_NOT_INSTALLED; exit 87; }
+          export CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local
+          go version > "$R1_EVIDENCE_DIR/go_toolchain.txt"
+          go build -trimpath -buildvcs=false -o "$R1_BIN_DIR/r1-probe" ./r1_runtime_probe.go
+          test -x "$R1_BIN_DIR/r1-probe"
+          docker pull --platform linux/amd64 "$DOCKER_IMAGE" >/dev/null
+          cp "$R1_ROOT/source/stage4_r1/fixture/src/selection.py" "$R1_ROOT/allowed_selection.py"
+          chmod 0666 "$R1_ROOT/allowed_selection.py"
+          set +e
+          timeout --signal=TERM --kill-after=5s 600s docker run --rm \
+            --platform linux/amd64 --pull=never --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit=64 --memory=6g --cpus=2 --user=65534:65534 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=1024m,mode=1777 \
+            --env HOME=/tmp/r1-home --env XDG_CONFIG_HOME=/tmp/r1-config \
+            --env XDG_DATA_HOME=/tmp/r1-data --env XDG_CACHE_HOME=/tmp/r1-cache \
+            --env OPENCODE_DISABLE_MODELS_FETCH=1 \
+            --env OPENCODE_DISABLE_DEFAULT_PLUGINS=1 \
+            --env OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
+            --env OPENCODE_DISABLE_CLAUDE_CODE=1 \
+            --mount "type=bind,src=$R1_BIN_DIR,dst=/opt/bin,readonly" \
+            --mount "type=bind,src=$R1_ROOT/source/stage4_r1/fixture,dst=/workspace,readonly" \
+            --mount "type=bind,src=$R1_ROOT/allowed_selection.py,dst=/workspace/src/selection.py" \
+            "$DOCKER_IMAGE" /opt/bin/r1-probe > "$R1_EVIDENCE_DIR/runtime.stdout.log" 2> "$R1_EVIDENCE_DIR/runtime.stderr.log"
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" > "$R1_EVIDENCE_DIR/runtime.exitcode"
+          # File must remain byte-for-byte identical after probe.
+          cmp "$R1_ROOT/allowed_selection.py" "$R1_ROOT/source/stage4_r1/fixture/src/selection.py" || exit 88
+          test "$rc" -eq 0 || exit 87
+          python3 - <<'PY_RESULT'
+          import json,os,pathlib
+          p=pathlib.Path(os.environ['R1_EVIDENCE_DIR'])/'runtime.stdout.log'
+          if p.stat().st_size>131072:raise RuntimeError('RUNTIME_STDOUT_TOO_LARGE')
+          lines=p.read_text().splitlines()
+          prefix='R1_JSON_RESULT='
+          results=[x[len(prefix):] for x in lines if x.startswith(prefix)]
+          if len(results)!=1 or not any(x.strip()=='R1_REAL_PERMISSION_API_AND_OS_GATE_PASS' for x in lines):raise RuntimeError('RUNTIME_RESULT_MISSING')
+          record=json.loads(results[0])
+          checks=record.get('checks')
+          if record.get('status')!='R1_REAL_RUNTIME_PASS' or not isinstance(checks,list) or len(checks)<25 or any(x.get('verdict')!='PASS' for x in checks):raise RuntimeError('RUNTIME_REPORTED_CHECKS_INVALID')
+          (p.parent/'runtime_result.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
+          print('R1_INDEPENDENT_HOST_RECEIPT_PASS')
+          PY_RESULT
+          echo R1_RUNTIME_NEGATIVE_TEST_PASS > "$R1_EVIDENCE_DIR/status.txt"
+
+      - name: Independent SHA manifest and execution receipt
+        id: evidence_ready
+        if: always()
+        run: |
+          set -euo pipefail
+          R1_EVIDENCE_DIR="${R1_EVIDENCE_DIR:-$RUNNER_TEMP/pcc-r1-evidence}"
+          mkdir -p "$R1_EVIDENCE_DIR"
+          printf 'run_id=%s\nsha=%s\nattempt=%s\nrepository=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$GITHUB_REPOSITORY" > "$R1_EVIDENCE_DIR/EXECUTION_RECEIPT.txt"
+          if test -e "$R1_EVIDENCE_DIR/status.txt" && grep -qx R1_RUNTIME_NEGATIVE_TEST_PASS "$R1_EVIDENCE_DIR/status.txt"; then
+            echo 'status=R1_RUNTIME_PASS_ONLY_R2_HOLD' >> "$R1_EVIDENCE_DIR/EXECUTION_RECEIPT.txt"
+          else
+            echo 'status=R1_BLOCKED' >> "$R1_EVIDENCE_DIR/EXECUTION_RECEIPT.txt"
+          fi
+          python3 - <<'PY_BOUNDED'
+          import os,pathlib
+          p=pathlib.Path(os.environ['R1_EVIDENCE_DIR'])
+          if any(f.is_symlink() for f in p.rglob('*')):raise RuntimeError('UNEXPECTED_EVIDENCE_SYMLINK')
+          if any(f.is_file() and f.stat().st_size>131072 for f in p.rglob('*')):raise RuntimeError('PUBLIC_EVIDENCE_TOO_LARGE')
+          if sum(f.stat().st_size for f in p.rglob('*') if f.is_file())>262144:raise RuntimeError('PUBLIC_EVIDENCE_TOTAL_TOO_LARGE')
+          PY_BOUNDED
+          (cd "$R1_EVIDENCE_DIR" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 -r sha256sum) > "$R1_EVIDENCE_DIR/SHA256SUMS.txt"
+          (cd "$R1_EVIDENCE_DIR" && sha256sum -c SHA256SUMS.txt)
+          echo verified=true >> "$GITHUB_OUTPUT"
+
+      - name: Upload public-safe model-free evidence, retention 1 day
+        if: ${{ always() && steps.evidence_ready.outputs.verified == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pcc-opencode-stage4-r1-evidence
+          path: ${{ runner.temp }}/pcc-r1-evidence/
+          retention-days: 1
+          if-no-files-found: warn

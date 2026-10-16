@@ -1,0 +1,16 @@
+{
+  "public_repository": "automation-coding-test1/cli-fixture-sandbox-202610",
+  "stage3_head": "b5f2914c46c0524cbbdab2508b5085e014496b0b",
+  "stage3_run_id": 38836182752,
+  "stage3_artifact_id": 12019800172,
+  "cli_version": "2.0.29",
+  "npm_name": "@opencode/cli-linux-x64",
+  "meta_url": "https://registry.npmjs.org/@opencode%2fcli-linux-x64/2.0.29",
+  "tarball_url": "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.29.tgz",
+  "npm_sha512_sri": "sha512-pdG/T4uBxSC3hjUTOrTlx2pXlZl2VqABlb0AgDlZ8VO/q1pUUOYvooWmN5VeSi+EP8cKGVUsj0GUmMDeB2ympA==",
+  "npm_sha1": "313baad6a682b48fcda9e227164a685c4ab0887c",
+  "tarball_sha256": "14b5a6638a1a093ac9d484599c844b10c29b445d04844b682ccc668ce26530a2",
+  "cli_elf_sha256": "7e23471f4ebe2313d78baacc9ac96fe9e197ce26d808de4b0fcc37efbe473dad",
+  "ubuntu_digest": "docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+  "origin": "Stage 3 GitHub-hosted runner immutable evidence; independent binary re-check REQUIRED in R1"
+}

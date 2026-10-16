@@ -1,0 +1,84 @@
+{
+  "permissions": [
+    {
+      "action": "*",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "src/selection.py",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "tests/test_selection.py",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "README.md",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": "src/selection.py",
+      "effect": "allow"
+    }
+  ],
+  "mcp": {
+    "servers": {}
+  },
+  "plugins": [],
+  "formatter": false,
+  "snapshots": false,
+  "policies": [
+    {
+      "action": "tool.use",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "read:README.md",
+      "effect": "allow"
+    },
+    {
+      "action": "tool.use",
+      "resource": "read:src/selection.py",
+      "effect": "allow"
+    },
+    {
+      "action": "tool.use",
+      "resource": "read:tests/test_selection.py",
+      "effect": "allow"
+    },
+    {
+      "action": "tool.use",
+      "resource": "edit:src/selection.py",
+      "effect": "allow"
+    },
+    {
+      "action": "integration.use",
+      "resource": "mcp:*",
+      "effect": "deny"
+    },
+    {
+      "action": "integration.use",
+      "resource": "plugin:*",
+      "effect": "deny"
+    },
+    {
+      "action": "integration.use",
+      "resource": "skill:*",
+      "effect": "deny"
+    },
+    {
+      "action": "provider.use",
+      "resource": "*",
+      "effect": "deny"
+    }
+  ],
+  "update": "disable",
+  "skills": []
+}
